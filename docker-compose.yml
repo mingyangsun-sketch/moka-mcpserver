@@ -1,0 +1,17 @@
+services:
+  moka-mcp:
+    build: .
+    image: moka-mcp-server:latest
+    container_name: moka-mcp-server
+    restart: unless-stopped
+    # 敏感凭证从 .env 注入（MOKA_API_KEY / MOKA_ORG_ID / MOKA_MCP_API_KEY 等）
+    env_file:
+      - .env
+    environment:
+      # 部署相关的非敏感项在此固定，覆盖 .env 里的同名值
+      MOKA_TRANSPORT: http
+      MOKA_HTTP_HOST: 0.0.0.0
+      MOKA_HTTP_PORT: "8000"
+      MOKA_HTTP_PATH: /mcp
+    ports:
+      - "8000:8000"
