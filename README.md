@@ -167,8 +167,8 @@ mcporter（stdio 形式）配置示例：
         "MOKA_API_KEY": "组织级 Moka Key",
         "MOKA_ORG_ID": "Antalpha",
         "MOKA_ENV": "production",
-        "MOKA_ROLE": "interviewer",
-        "MOKA_MOKA_USER_ID": "43694826"
+        "MOKA_ROLE": "hiring_manager",
+        "MOKA_DEPARTMENTS": "产品部"
       }
     }
   }
@@ -177,26 +177,36 @@ mcporter（stdio 形式）配置示例：
 
 > 每个用户用各自的 `env`（角色 + 身份）拉起一个实例，即可实现按用户限权（见下）。
 
-## 权限控制（多角色限权）
+## 权限控制（面向企业内部用户）
 
 由于 Moka 的 API Key 是**组织级**的（能读全量数据），按用户限权只能在本服务层实现。
-stdio 模式下，**每个实例即一个调用者**，其身份由启动 env 决定：
+身份模型为**模型 A**：Hermes 解析 Slack 用户 → 决定角色/部门 → 用对应 env 拉起该
+用户的 MCP 实例。因此 stdio 下**每个实例即一个调用者**，角色由启动 env 决定。
+
+### 角色
+
+| 角色 | 对应人群 | 可用工具 | 数据范围 |
+|------|----------|----------|----------|
+| `hr_admin` | HR/招聘团队负责人 | 全部 | 全量 |
+| `recruiter` | 招聘专员 | 候选人/职位/流程/Offer/人才库/组织（读） | 全量 |
+| `hiring_manager` | 用人经理/部门负责人 | 候选人/职位/流程/组织（无人才库） | **仅本部门** |
+| `viewer` | 普通员工 | 职位/流程/组织（**不含候选人 PII**） | 全量（公开信息） |
+
+### 相关 env
 
 | env | 说明 |
 |-----|------|
-| `MOKA_ROLE` | `admin`/`hr_admin`（全部）`recruiter` `interviewer` `hiring_manager` `viewer` |
-| `MOKA_SCOPE` | 数据范围，留空按角色推断：`all` / `interviewer` / `owner` / `department` |
-| `MOKA_MOKA_USER_ID` | interviewer 范围用：调用者的 Moka 用户 id（匹配候选人 `interviewers[].id`） |
-| `MOKA_MOKA_EMAIL` | owner 范围用：匹配 `owners`/`jobManager` 的 email |
-| `MOKA_DEPARTMENTS` | department 范围用：逗号分隔部门名 |
+| `MOKA_ROLE` | 上表角色之一；默认 `hr_admin` |
+| `MOKA_DEPARTMENTS` | `hiring_manager` 必填：逗号分隔的本部门名（如 `产品部,技术部`） |
+| `MOKA_SCOPE` | 数据范围覆盖：`all` / `department`，留空按角色推断 |
 | `MOKA_ALLOWED_TOOLS` | 工具白名单覆盖（逗号分隔，`*` 表示全部） |
 
 控制分两层：
-- **工具级**：角色决定可调用哪些 Tool（如 interviewer 不能调用 `list_talent_pools`）。
-- **数据行级**：返回结果按范围过滤（如 interviewer 只看到自己参与面试的候选人）。
+- **工具级**：角色决定可调用哪些 Tool（如 `viewer` 不能调用 `search_candidates`）。
+- **数据行级**：`hiring_manager` 的候选人/职位结果按 `MOKA_DEPARTMENTS` 过滤到本部门。
 
 > ⚠️ **安全前提**：组织级 Key 会随实例分发，因此按用户限权只有在**可信后端
-> （如 Hermes）统一持有 Key、并为每个用户 spawn 对应角色 env 的实例**时才真正有效；
+> （Hermes）统一持有 Key、并为每个用户 spawn 对应角色 env 的实例**时才真正有效；
 > 终端用户不能自行查看/修改 env，否则可拿全量 Key 绕过限制。
 
 ## 设计要点

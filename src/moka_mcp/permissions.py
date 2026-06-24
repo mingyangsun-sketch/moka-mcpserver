@@ -1,15 +1,16 @@
-"""权限控制：工具级白名单 + 数据行级过滤。
+"""权限控制：工具级白名单 + 数据行级过滤（面向企业内部用户）。
 
-stdio 模式下，每个被拉起的实例即「一个调用者」，其身份/角色由启动时注入的
-env 决定（见 config.py）。因此这里以「单一 principal」模型实现，无需 HTTP 中间件。
+身份模型（模型 A）：Hermes 解析 Slack 用户 → 决定角色/部门 → 用对应 env 拉起
+该用户的 MCP 实例。因此每个实例即「一个调用者」，其角色由启动 env 决定，
+MCP 侧以「单一 principal」实现，无需 HTTP 中间件 / 每请求身份。
 
 安全前提：组织级 Moka Key 会随实例分发，故按用户限权只有在「可信后端
-（如 Hermes）统一持有 Key 并为每个用户 spawn 对应角色的实例」时才真正有效。
+（Hermes）统一持有 Key 并为每个用户 spawn 对应角色的实例」时才真正有效。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 
 from .config import Settings, get_settings
@@ -26,37 +27,29 @@ _PROCESS_TOOLS = {"list_pipelines", "list_stages"}
 _ORG_TOOLS = {"list_departments"}
 _OFFER_TOOLS = {"get_offer_custom_fields"}
 _TALENT_TOOLS = {"list_talent_pools", "list_talent_pool_candidates"}
-_ALL_TOOLS = (
-    _CANDIDATE_TOOLS
-    | _JOB_TOOLS
-    | _PROCESS_TOOLS
-    | _ORG_TOOLS
-    | _OFFER_TOOLS
-    | _TALENT_TOOLS
-)
 
-# 角色预设：可用工具 + 默认数据范围
-# tools 为 "*" 表示全部
+# 角色预设（面向内部用户）：可用工具 + 默认数据范围
+# tools 为 "*" 表示全部；scope ∈ {all, department}
 _ROLE_PRESETS: dict[str, dict] = {
-    "admin": {"tools": "*", "scope": "all"},
+    # HR/招聘团队负责人：全部工具 + 全量数据
     "hr_admin": {"tools": "*", "scope": "all"},
+    "admin": {"tools": "*", "scope": "all"},  # 别名/兜底
+    # 招聘专员：候选人/职位/流程/Offer/人才库/组织（读），全量
     "recruiter": {
         "tools": _CANDIDATE_TOOLS
         | _JOB_TOOLS
         | _PROCESS_TOOLS
-        | _ORG_TOOLS
         | _OFFER_TOOLS
-        | _TALENT_TOOLS,
-        "scope": "owner",
+        | _TALENT_TOOLS
+        | _ORG_TOOLS,
+        "scope": "all",
     },
-    "interviewer": {
-        "tools": _CANDIDATE_TOOLS | _JOB_TOOLS | _PROCESS_TOOLS,
-        "scope": "interviewer",
-    },
+    # 用人经理/部门负责人：候选人/职位/流程/组织（读，无人才库），仅本部门
     "hiring_manager": {
         "tools": _CANDIDATE_TOOLS | _JOB_TOOLS | _PROCESS_TOOLS | _ORG_TOOLS,
         "scope": "department",
     },
+    # 普通员工：职位/流程/组织等公开信息，不含候选人 PII
     "viewer": {
         "tools": _JOB_TOOLS | _PROCESS_TOOLS | _ORG_TOOLS,
         "scope": "all",
@@ -71,11 +64,9 @@ class ToolPermissionDenied(Exception):
 @dataclass(frozen=True)
 class Principal:
     role: str
-    scope: str  # all | interviewer | owner | department
-    allowed_tools: frozenset[str]  # 空集且 allow_all=False 时表示无权限
+    scope: str  # all | department
+    allowed_tools: frozenset[str]
     allow_all_tools: bool
-    moka_user_id: int | None
-    moka_email: str
     departments: tuple[str, ...]
 
     def can_use(self, tool_name: str) -> bool:
@@ -87,7 +78,7 @@ def _split_csv(raw: str) -> list[str]:
 
 
 def _build_principal(s: Settings) -> Principal:
-    role = (s.role or "admin").strip().lower()
+    role = (s.role or "hr_admin").strip().lower()
     preset = _ROLE_PRESETS.get(role, _ROLE_PRESETS["viewer"])
 
     # 工具白名单：env 覆盖优先，否则用角色预设
@@ -107,8 +98,6 @@ def _build_principal(s: Settings) -> Principal:
         scope=scope,
         allowed_tools=tools,
         allow_all_tools=allow_all,
-        moka_user_id=s.moka_user_id,
-        moka_email=(s.moka_email or "").strip().lower(),
         departments=tuple(_split_csv(s.departments)),
     )
 
@@ -121,7 +110,7 @@ def get_principal() -> Principal:
 # ---------- 工具级控制 ----------
 
 def enforce_tool(tool_name: str) -> None:
-    """校验当前 principal 是否可调用该工具，不可则抛 PermissionError。"""
+    """校验当前 principal 是否可调用该工具，不可则抛 ToolPermissionDenied。"""
     p = get_principal()
     if not p.can_use(tool_name):
         raise ToolPermissionDenied(
@@ -130,29 +119,7 @@ def enforce_tool(tool_name: str) -> None:
         )
 
 
-# ---------- 数据行级过滤 ----------
-
-def _candidate_interviewer_ids(rec: dict) -> set[int]:
-    ids: set[int] = set()
-    for key in ("interviewers", "extendedInterviewers"):
-        for iv in rec.get(key) or []:
-            if isinstance(iv, dict) and isinstance(iv.get("id"), int):
-                ids.add(iv["id"])
-    return ids
-
-
-def _candidate_owner_emails(rec: dict) -> set[str]:
-    emails: set[str] = set()
-    for key in ("owners", "jobManager"):
-        v = rec.get(key)
-        if isinstance(v, dict) and v.get("email"):
-            emails.add(str(v["email"]).strip().lower())
-        elif isinstance(v, list):
-            for item in v:
-                if isinstance(item, dict) and item.get("email"):
-                    emails.add(str(item["email"]).strip().lower())
-    return emails
-
+# ---------- 数据行级过滤（按部门）----------
 
 def _candidate_department(rec: dict) -> str | None:
     job = rec.get("job")
@@ -165,29 +132,22 @@ def _candidate_department(rec: dict) -> str | None:
     return None
 
 
-def filter_candidates(rows: list) -> list:
-    """按当前 principal 的 scope 过滤候选人行。"""
-    p = get_principal()
-    if p.scope == "all" or not isinstance(rows, list):
-        return rows
+def _norm(name: str | None) -> str:
+    return (name or "").strip()
 
-    out = []
-    for rec in rows:
-        if not isinstance(rec, dict):
-            continue
-        if p.scope == "interviewer":
-            if p.moka_user_id is not None and p.moka_user_id in _candidate_interviewer_ids(rec):
-                out.append(rec)
-        elif p.scope == "owner":
-            if p.moka_email and p.moka_email in _candidate_owner_emails(rec):
-                out.append(rec)
-        elif p.scope == "department":
-            dep = _candidate_department(rec)
-            if dep and dep in p.departments:
-                out.append(rec)
-        else:
-            out.append(rec)
-    return out
+
+def filter_candidates(rows: list) -> list:
+    """按当前 principal 的 scope 过滤候选人行（仅 department 范围会过滤）。"""
+    p = get_principal()
+    if p.scope != "department" or not isinstance(rows, list):
+        return rows
+    # 两侧均 trim 后比较（Moka 部门名可能带尾随空格）
+    depts = {_norm(d) for d in p.departments}
+    return [
+        rec
+        for rec in rows
+        if isinstance(rec, dict) and _norm(_candidate_department(rec)) in depts
+    ]
 
 
 def _job_department_name(job: dict) -> str | None:
@@ -200,16 +160,13 @@ def _job_department_name(job: dict) -> str | None:
 
 
 def filter_jobs(rows: list) -> list:
-    """按当前 principal 的 scope 过滤职位行。
-
-    职位列表里只有部门可靠归属，故仅 department 范围会过滤；
-    其余非 all 范围下职位敏感度较低，保持原样（访问与否由工具白名单控制）。
-    """
+    """按当前 principal 的 scope 过滤职位行（仅 department 范围会过滤）。"""
     p = get_principal()
     if p.scope != "department" or not isinstance(rows, list):
         return rows
+    depts = {_norm(d) for d in p.departments}
     return [
         j
         for j in rows
-        if isinstance(j, dict) and _job_department_name(j) in p.departments
+        if isinstance(j, dict) and _norm(_job_department_name(j)) in depts
     ]

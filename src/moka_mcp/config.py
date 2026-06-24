@@ -45,22 +45,16 @@ class Settings(BaseSettings):
 
     # ===== 权限控制（stdio 单实例 = 单一调用者身份，由启动 env 注入）=====
     role: str = Field(
-        "admin",
-        description="调用者角色：admin/hr_admin | recruiter | interviewer | "
-        "hiring_manager | viewer。决定可用工具与默认数据范围",
-    )
-    moka_user_id: int | None = Field(
-        None, description="调用者对应的 Moka 用户 id（int），用于 interviewer 范围过滤"
-    )
-    moka_email: str = Field(
-        "", description="调用者对应的 Moka 邮箱，用于 owner 范围过滤"
+        "hr_admin",
+        description="调用者角色：hr_admin/admin | recruiter | hiring_manager | "
+        "viewer。决定可用工具与默认数据范围",
     )
     departments: str = Field(
-        "", description="逗号分隔的部门名列表，用于 department 范围过滤"
+        "", description="逗号分隔的部门名列表，hiring_manager 的 department 范围过滤用"
     )
     scope: str = Field(
         "",
-        description="数据范围覆盖：all | interviewer | owner | department；留空则按 role 推断",
+        description="数据范围覆盖：all | department；留空则按 role 推断",
     )
     allowed_tools: str = Field(
         "",
