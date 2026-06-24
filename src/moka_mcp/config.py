@@ -44,10 +44,15 @@ class Settings(BaseSettings):
     max_items: int = Field(200, description="自动翻页最多拉取条数上限")
 
     # ===== 权限控制（stdio 单实例 = 单一调用者身份，由启动 env 注入）=====
+    acting_email: str = Field(
+        "",
+        description="调用者的可信邮箱（Hermes 校验后注入）。设置后将按邮箱在 Moka "
+        "解析用户→角色/部门→自动派生权限；留空则用下面的静态 role/scope 配置",
+    )
     role: str = Field(
         "hr_admin",
-        description="调用者角色：hr_admin/admin | recruiter | hiring_manager | "
-        "viewer。决定可用工具与默认数据范围",
+        description="调用者角色（acting_email 未设时生效）：hr_admin/admin | "
+        "recruiter | hiring_manager | viewer",
     )
     departments: str = Field(
         "", description="逗号分隔的部门名列表，hiring_manager 的 department 范围过滤用"

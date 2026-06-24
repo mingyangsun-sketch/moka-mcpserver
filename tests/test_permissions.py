@@ -166,3 +166,32 @@ def test_filter_jobs_department(monkeypatch):
 def test_filter_jobs_scope_all_no_filter(monkeypatch):
     monkeypatch.setattr(permissions, "get_principal", lambda: _principal("all"))
     assert filter_jobs(_JOBS) == _JOBS
+
+
+# ---------- 由 Moka role 派生角色档 ----------
+
+def test_tier_for_moka_role():
+    f = permissions._tier_for_moka_role
+    assert f(50) == "hr_admin"  # 超级管理员
+    assert f(40) == "hr_admin"  # 管理员
+    assert f(30) == "hr_admin"  # HR
+    assert f(25) == "hiring_manager"  # 高级用人经理
+    assert f(20) == "hiring_manager"  # 用人经理
+    assert f(10) == "viewer"  # 面试官
+    assert f(5) == "viewer"  # 前台
+    assert f(0) == "viewer"  # 内推人
+    assert f(None) == "viewer"
+
+
+def test_principal_for_tier_hr_admin():
+    p = permissions._principal_for_tier("hr_admin", ())
+    assert p.allow_all_tools
+    assert p.scope == "all"
+
+
+def test_principal_for_tier_hiring_manager_keeps_departments():
+    p = permissions._principal_for_tier("hiring_manager", ("产品部 ", "技术部"))
+    assert p.scope == "department"
+    assert p.departments == ("产品部", "技术部")  # 已 trim
+    assert p.can_use("search_candidates")
+    assert not p.can_use("list_talent_pools")

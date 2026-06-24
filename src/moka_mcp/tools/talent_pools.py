@@ -12,7 +12,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from ..client import get_client
-from ..permissions import enforce_tool
+from ..permissions import authorize
 from ..utils.sanitize import sanitize
 
 
@@ -25,7 +25,7 @@ def register(mcp: FastMCP) -> None:
 
         返回每个人才库的 id、name、hireMode、isPrivate 等（实测直接返回数组）。
         """
-        enforce_tool("list_talent_pools")
+        await authorize("list_talent_pools")
         client = get_client()
         body = await client.get("/talentPool/list")
         pools = body if isinstance(body, list) else body.get("data")
@@ -46,7 +46,7 @@ def register(mcp: FastMCP) -> None:
         - archived_at_start：归档开始时间，如 "2019-06-01"。
         - archived_at_end：归档结束时间，如 "2019-11-01"。
         """
-        enforce_tool("list_talent_pool_candidates")
+        await authorize("list_talent_pool_candidates")
         client = get_client()
         ids_param = "[" + ",".join(str(i) for i in talent_pool_ids) + "]"
         body = await client.get(

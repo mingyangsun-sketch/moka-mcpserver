@@ -13,7 +13,7 @@ from typing import Any, Literal
 from mcp.server.fastmcp import FastMCP
 
 from ..client import get_client
-from ..permissions import enforce_tool, filter_jobs
+from ..permissions import authorize, filter_jobs
 
 Mode = Literal["social", "campus"]
 
@@ -46,7 +46,7 @@ def register(mcp: FastMCP) -> None:
 
         说明：已关闭但未勾选「取消在官网显示」的职位仍会返回；已删除职位不返回。
         """
-        enforce_tool("list_jobs")
+        await authorize("list_jobs")
         client = get_client()
         oid = _resolve_org_id(org_id)
         body = await client.get(
@@ -69,7 +69,7 @@ def register(mcp: FastMCP) -> None:
         - job_id：职位 ID。
         - org_id：组织标识；留空则使用 .env 中的 MOKA_ORG_ID。
         """
-        enforce_tool("get_job_detail")
+        await authorize("get_job_detail")
         client = get_client()
         oid = _resolve_org_id(org_id)
         body = await client.get(f"/jobs/{oid}/{job_id}")
@@ -94,7 +94,7 @@ def register(mcp: FastMCP) -> None:
         - job_id：职位 ID。
         - org_id：组织标识；留空则使用 .env 中的 MOKA_ORG_ID。
         """
-        enforce_tool("get_job_custom_fields")
+        await authorize("get_job_custom_fields")
         client = get_client()
         oid = _resolve_org_id(org_id)
         body = await client.get(f"/jobs/{oid}/{job_id}")

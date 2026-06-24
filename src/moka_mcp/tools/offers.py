@@ -7,7 +7,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from ..client import get_client
-from ..permissions import enforce_tool
+from ..permissions import authorize
 
 
 def register(mcp: FastMCP) -> None:
@@ -20,7 +20,7 @@ def register(mcp: FastMCP) -> None:
         说明：实测返回结构为 {"social": [...], "campus": [...]}，分别对应
         社招和校招的字段定义（不是通用的 data 字段）。
         """
-        enforce_tool("get_offer_custom_fields")
+        await authorize("get_offer_custom_fields")
         client = get_client()
         body = await client.get("/offers/custom_fields")
         if isinstance(body, dict):

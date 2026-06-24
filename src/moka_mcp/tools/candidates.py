@@ -14,7 +14,7 @@ from mcp.server.fastmcp import FastMCP
 
 from ..client import get_client
 from ..errors import MokaEmptyStageError
-from ..permissions import enforce_tool, filter_candidates
+from ..permissions import authorize, filter_candidates
 from ..utils.pagination import fetch_all
 from ..utils.sanitize import sanitize
 
@@ -44,7 +44,7 @@ def register(mcp: FastMCP) -> None:
         注意：stage 与 applicationId 至少需要一个定位条件；按 stage 查询且该
         阶段当前没有候选人时，Moka 会返回 500，本工具会将其作为「空结果」处理。
         """
-        enforce_tool("search_candidates")
+        await authorize("search_candidates")
         client = get_client()
         params = {
             "stage": stage,
@@ -82,7 +82,7 @@ def register(mcp: FastMCP) -> None:
         返回包含基本信息、教育/工作经历、自定义字段、阶段、职位、Offer、
         面试官、内推人、附件等。注意附件与头像 URL 有效期仅 1 小时。
         """
-        enforce_tool("get_candidate_detail")
+        await authorize("get_candidate_detail")
         client = get_client()
         body = await client.get(
             "/data/ehrApplications",
@@ -106,7 +106,7 @@ def register(mcp: FastMCP) -> None:
         返回每条申请的 applicationId、status（in_progress/rejected 等）、
         stageName、createdAt。
         """
-        enforce_tool("get_candidate_applications")
+        await authorize("get_candidate_applications")
         client = get_client()
         body = await client.post(
             "/getApplicationStates",
@@ -126,7 +126,7 @@ def register(mcp: FastMCP) -> None:
         参数：
         - application_id：候选人申请 ID。
         """
-        enforce_tool("get_candidate_stage")
+        await authorize("get_candidate_stage")
         client = get_client()
         body = await client.get(
             "/data/ehrApplications",

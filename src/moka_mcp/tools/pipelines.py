@@ -10,7 +10,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from ..client import get_client
-from ..permissions import enforce_tool
+from ..permissions import authorize
 
 
 def register(mcp: FastMCP) -> None:
@@ -22,7 +22,7 @@ def register(mcp: FastMCP) -> None:
 
         返回每个流程的 id、name、hireMode、entryConditions 等。
         """
-        enforce_tool("list_pipelines")
+        await authorize("list_pipelines")
         client = get_client()
         body = await client.get("/pipelines/getPipelinesList", version="v2")
         data = body.get("data") if isinstance(body, dict) else body
@@ -39,7 +39,7 @@ def register(mcp: FastMCP) -> None:
 
         返回每个阶段的 id、name、type。
         """
-        enforce_tool("list_stages")
+        await authorize("list_stages")
         client = get_client()
         params = {"pipelineId": pipeline_id} if pipeline_id else None
         body = await client.get("/stage/getStagesList", version="v2", params=params)

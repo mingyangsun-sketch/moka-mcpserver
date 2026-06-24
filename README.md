@@ -167,8 +167,7 @@ mcporter（stdio 形式）配置示例：
         "MOKA_API_KEY": "组织级 Moka Key",
         "MOKA_ORG_ID": "Antalpha",
         "MOKA_ENV": "production",
-        "MOKA_ROLE": "hiring_manager",
-        "MOKA_DEPARTMENTS": "产品部"
+        "MOKA_ACTING_EMAIL": "该 Slack 用户的可信邮箱（Hermes 校验后注入）"
       }
     }
   }
@@ -192,18 +191,36 @@ mcporter（stdio 形式）配置示例：
 | `hiring_manager` | 用人经理/部门负责人 | 候选人/职位/流程/组织（无人才库） | **仅本部门** |
 | `viewer` | 普通员工 | 职位/流程/组织（**不含候选人 PII**） | 全量（公开信息） |
 
-### 相关 env
+### 身份与角色的确定方式（两种）
+
+**① 按邮箱自动派生（推荐）**：Hermes 校验 Slack 用户后，注入其可信邮箱
+`MOKA_ACTING_EMAIL`。本服务用组织 key 在 Moka 解析该用户（`POST /users/list`
+按 email 精确查询），再按其 Moka `role` 与 `department` 自动定档：
+
+| Moka role | 自动派生角色 |
+|-----------|--------------|
+| ≥30（HR / 管理员 / 超级管理员） | `hr_admin`（全量） |
+| 20 / 25（用人经理 / 高级用人经理） | `hiring_manager`（仅其所在部门） |
+| 其余（面试官 / 前台 / 内推人） | `viewer` |
+
+> 邮箱在 Moka 找不到 → 退化为 `viewer`（最小权限）。无需手工维护角色表，
+> 人员/部门在 Moka 一改，权限自动跟随。
+
+**② 静态配置（兜底，未配 `MOKA_ACTING_EMAIL` 时生效）**：
 
 | env | 说明 |
 |-----|------|
 | `MOKA_ROLE` | 上表角色之一；默认 `hr_admin` |
-| `MOKA_DEPARTMENTS` | `hiring_manager` 必填：逗号分隔的本部门名（如 `产品部,技术部`） |
-| `MOKA_SCOPE` | 数据范围覆盖：`all` / `department`，留空按角色推断 |
+| `MOKA_DEPARTMENTS` | `hiring_manager` 必填：逗号分隔的本部门名 |
+| `MOKA_SCOPE` | 数据范围覆盖：`all` / `department` |
 | `MOKA_ALLOWED_TOOLS` | 工具白名单覆盖（逗号分隔，`*` 表示全部） |
 
 控制分两层：
 - **工具级**：角色决定可调用哪些 Tool（如 `viewer` 不能调用 `search_candidates`）。
-- **数据行级**：`hiring_manager` 的候选人/职位结果按 `MOKA_DEPARTMENTS` 过滤到本部门。
+- **数据行级**：`hiring_manager` 的候选人/职位结果按其部门过滤到本部门。
+
+> ⚠️ `MOKA_ACTING_EMAIL` 必须是 **Hermes 校验过的可信邮箱**，不能由 LLM 或用户
+> 随意填入，否则可冒充他人。
 
 > ⚠️ **安全前提**：组织级 Key 会随实例分发，因此按用户限权只有在**可信后端
 > （Hermes）统一持有 Key、并为每个用户 spawn 对应角色 env 的实例**时才真正有效；
