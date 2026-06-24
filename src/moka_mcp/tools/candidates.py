@@ -14,6 +14,7 @@ from mcp.server.fastmcp import FastMCP
 
 from ..client import get_client
 from ..errors import MokaEmptyStageError
+from ..permissions import enforce_tool, filter_candidates
 from ..utils.pagination import fetch_all
 from ..utils.sanitize import sanitize
 
@@ -43,6 +44,7 @@ def register(mcp: FastMCP) -> None:
         注意：stage 与 applicationId 至少需要一个定位条件；按 stage 查询且该
         阶段当前没有候选人时，Moka 会返回 500，本工具会将其作为「空结果」处理。
         """
+        enforce_tool("search_candidates")
         client = get_client()
         params = {
             "stage": stage,
@@ -64,6 +66,7 @@ def register(mcp: FastMCP) -> None:
         except MokaEmptyStageError:
             return {"total": 0, "candidates": [], "note": "该阶段当前没有候选人。"}
 
+        rows = filter_candidates(rows)  # 数据行级过滤（按角色范围）
         masked = sanitize(rows, enabled=client.settings.mask_sensitive)
         return {"total": len(masked), "candidates": masked}
 
@@ -79,12 +82,15 @@ def register(mcp: FastMCP) -> None:
         返回包含基本信息、教育/工作经历、自定义字段、阶段、职位、Offer、
         面试官、内推人、附件等。注意附件与头像 URL 有效期仅 1 小时。
         """
+        enforce_tool("get_candidate_detail")
         client = get_client()
         body = await client.get(
             "/data/ehrApplications",
             params={"applicationId": application_id},
         )
         data = body.get("data") if isinstance(body, dict) else body
+        if isinstance(data, list):
+            data = filter_candidates(data)  # 越权 ID 会被过滤掉
         masked = sanitize(data, enabled=client.settings.mask_sensitive)
         return {"candidates": masked}
 
@@ -100,6 +106,7 @@ def register(mcp: FastMCP) -> None:
         返回每条申请的 applicationId、status（in_progress/rejected 等）、
         stageName、createdAt。
         """
+        enforce_tool("get_candidate_applications")
         client = get_client()
         body = await client.post(
             "/getApplicationStates",
@@ -119,17 +126,20 @@ def register(mcp: FastMCP) -> None:
         参数：
         - application_id：候选人申请 ID。
         """
+        enforce_tool("get_candidate_stage")
         client = get_client()
         body = await client.get(
             "/data/ehrApplications",
             params={"applicationId": application_id},
         )
         data = body.get("data") if isinstance(body, dict) else body
+        if isinstance(data, list):
+            data = filter_candidates(data)  # 越权 ID 会被过滤
         if not data:
             return {
                 "applicationId": application_id,
                 "stageName": None,
-                "note": "未找到该申请。",
+                "note": "未找到该申请，或不在你的数据范围内。",
             }
         rec = data[0] if isinstance(data, list) else data
         return {

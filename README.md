@@ -150,6 +150,55 @@ mcporter call moka-mcp.list_pipelines
 > 注意区分两套凭证：`MOKA_API_KEY` 是「本服务 → Moka」的认证；`MOKA_MCP_API_KEY`
 > 是「agent → 本服务」的认证（对应请求头 `X-API-Key`），两者互不相同。
 
+## 通过 uvx 作为 stdio 包接入（推荐）
+
+本服务可作为标准 **stdio MCP 包**，由 agent（Hermes/mcporter）以子进程方式拉起，
+无需常驻 HTTP 服务。宿主机需有 Python / uv。
+
+mcporter（stdio 形式）配置示例：
+
+```json
+{
+  "mcpServers": {
+    "moka-mcp": {
+      "command": "uvx",
+      "args": ["--from", "git+ssh://git@github.com/mingyangsun-sketch/moka-mcpserver.git", "moka-mcp-server"],
+      "env": {
+        "MOKA_API_KEY": "组织级 Moka Key",
+        "MOKA_ORG_ID": "Antalpha",
+        "MOKA_ENV": "production",
+        "MOKA_ROLE": "interviewer",
+        "MOKA_MOKA_USER_ID": "43694826"
+      }
+    }
+  }
+}
+```
+
+> 每个用户用各自的 `env`（角色 + 身份）拉起一个实例，即可实现按用户限权（见下）。
+
+## 权限控制（多角色限权）
+
+由于 Moka 的 API Key 是**组织级**的（能读全量数据），按用户限权只能在本服务层实现。
+stdio 模式下，**每个实例即一个调用者**，其身份由启动 env 决定：
+
+| env | 说明 |
+|-----|------|
+| `MOKA_ROLE` | `admin`/`hr_admin`（全部）`recruiter` `interviewer` `hiring_manager` `viewer` |
+| `MOKA_SCOPE` | 数据范围，留空按角色推断：`all` / `interviewer` / `owner` / `department` |
+| `MOKA_MOKA_USER_ID` | interviewer 范围用：调用者的 Moka 用户 id（匹配候选人 `interviewers[].id`） |
+| `MOKA_MOKA_EMAIL` | owner 范围用：匹配 `owners`/`jobManager` 的 email |
+| `MOKA_DEPARTMENTS` | department 范围用：逗号分隔部门名 |
+| `MOKA_ALLOWED_TOOLS` | 工具白名单覆盖（逗号分隔，`*` 表示全部） |
+
+控制分两层：
+- **工具级**：角色决定可调用哪些 Tool（如 interviewer 不能调用 `list_talent_pools`）。
+- **数据行级**：返回结果按范围过滤（如 interviewer 只看到自己参与面试的候选人）。
+
+> ⚠️ **安全前提**：组织级 Key 会随实例分发，因此按用户限权只有在**可信后端
+> （如 Hermes）统一持有 Key、并为每个用户 spawn 对应角色 env 的实例**时才真正有效；
+> 终端用户不能自行查看/修改 env，否则可拿全量 Key 绕过限制。
+
 ## 设计要点
 
 - **认证**：Basic Auth（`Authorization: Basic base64(api_key + ":")`），无需处理 token 刷新。

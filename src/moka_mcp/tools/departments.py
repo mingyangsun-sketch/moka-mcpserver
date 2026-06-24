@@ -7,6 +7,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from ..client import get_client
+from ..permissions import enforce_tool
 
 
 def register(mcp: FastMCP) -> None:
@@ -18,6 +19,7 @@ def register(mcp: FastMCP) -> None:
 
         说明：实测返回结构为 {"departments": [...]}（不是通用的 data 字段）。
         """
+        enforce_tool("list_departments")
         client = get_client()
         body = await client.get("/departments")
         data = body.get("departments") if isinstance(body, dict) else body

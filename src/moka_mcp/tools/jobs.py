@@ -13,6 +13,7 @@ from typing import Any, Literal
 from mcp.server.fastmcp import FastMCP
 
 from ..client import get_client
+from ..permissions import enforce_tool, filter_jobs
 
 Mode = Literal["social", "campus"]
 
@@ -45,14 +46,15 @@ def register(mcp: FastMCP) -> None:
 
         说明：已关闭但未勾选「取消在官网显示」的职位仍会返回；已删除职位不返回。
         """
+        enforce_tool("list_jobs")
         client = get_client()
         oid = _resolve_org_id(org_id)
         body = await client.get(
             f"/jobs/{oid}", params={"mode": mode, "limit": limit}
         )
         jobs = body.get("jobs", []) if isinstance(body, dict) else body
-        total = body.get("total") if isinstance(body, dict) else None
-        return {"total": total if total is not None else len(jobs), "jobs": jobs}
+        jobs = filter_jobs(jobs)  # department 范围过滤
+        return {"total": len(jobs), "jobs": jobs}
 
     @mcp.tool()
     async def get_job_detail(
@@ -67,6 +69,7 @@ def register(mcp: FastMCP) -> None:
         - job_id：职位 ID。
         - org_id：组织标识；留空则使用 .env 中的 MOKA_ORG_ID。
         """
+        enforce_tool("get_job_detail")
         client = get_client()
         oid = _resolve_org_id(org_id)
         body = await client.get(f"/jobs/{oid}/{job_id}")
@@ -91,6 +94,7 @@ def register(mcp: FastMCP) -> None:
         - job_id：职位 ID。
         - org_id：组织标识；留空则使用 .env 中的 MOKA_ORG_ID。
         """
+        enforce_tool("get_job_custom_fields")
         client = get_client()
         oid = _resolve_org_id(org_id)
         body = await client.get(f"/jobs/{oid}/{job_id}")
