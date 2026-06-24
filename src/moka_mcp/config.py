@@ -52,10 +52,15 @@ class Settings(BaseSettings):
     role: str = Field(
         "hr_admin",
         description="调用者角色（acting_email 未设时生效）：hr_admin/admin | "
-        "recruiter | hiring_manager | viewer",
+        "recruiter | hiring_manager | interviewer | viewer",
     )
     departments: str = Field(
         "", description="逗号分隔的部门名列表，hiring_manager 的 department 范围过滤用"
+    )
+    moka_user_id: int | None = Field(
+        None,
+        description="interviewer 角色（静态配置时）匹配候选人面试官用的 Moka 用户 id；"
+        "邮箱模式下会自动从 Moka 解析，无需手填",
     )
     scope: str = Field(
         "",

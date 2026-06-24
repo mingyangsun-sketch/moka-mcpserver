@@ -177,7 +177,7 @@ def test_tier_for_moka_role():
     assert f(30) == "hr_admin"  # HR
     assert f(25) == "hiring_manager"  # 高级用人经理
     assert f(20) == "hiring_manager"  # 用人经理
-    assert f(10) == "viewer"  # 面试官
+    assert f(10) == "interviewer"  # 面试官
     assert f(5) == "viewer"  # 前台
     assert f(0) == "viewer"  # 内推人
     assert f(None) == "viewer"
@@ -195,3 +195,40 @@ def test_principal_for_tier_hiring_manager_keeps_departments():
     assert p.departments == ("产品部", "技术部")  # 已 trim
     assert p.can_use("search_candidates")
     assert not p.can_use("list_talent_pools")
+
+
+def test_interviewer_tier_tools_and_scope():
+    p = permissions._principal_for_tier("interviewer", (), moka_user_id=4242)
+    assert p.scope == "interviewer"
+    assert p.moka_user_id == 4242
+    # 可看候选人状态/详情/阶段 + 职位/流程
+    assert p.can_use("search_candidates")
+    assert p.can_use("get_candidate_detail")
+    assert p.can_use("get_candidate_stage")
+    assert p.can_use("list_jobs")
+    # 不可：按 candidateId 查申请、人才库、Offer 字段
+    assert not p.can_use("get_candidate_applications")
+    assert not p.can_use("list_talent_pools")
+    assert not p.can_use("get_offer_custom_fields")
+
+
+_CANDS_IV = [
+    {"name": "x", "interviewers": [{"id": 11}, {"id": 22}]},
+    {"name": "y", "interviewers": [{"id": 33}]},
+    {"name": "z", "extendedInterviewers": [{"id": 22}]},
+    {"name": "w", "interviewers": []},
+]
+
+
+def test_filter_candidates_interviewer_scope(monkeypatch):
+    pr = Principal("interviewer", "interviewer", frozenset(), False, (), moka_user_id=22)
+    monkeypatch.setattr(permissions, "get_principal", lambda: pr)
+    monkeypatch.setattr(permissions, "_resolved", pr, raising=False)
+    out = filter_candidates(_CANDS_IV)
+    assert {c["name"] for c in out} == {"x", "z"}  # 22 在 x 和 z
+
+
+def test_filter_candidates_interviewer_no_user_id_returns_empty(monkeypatch):
+    pr = Principal("interviewer", "interviewer", frozenset(), False, (), moka_user_id=None)
+    monkeypatch.setattr(permissions, "_resolved", pr, raising=False)
+    assert filter_candidates(_CANDS_IV) == []

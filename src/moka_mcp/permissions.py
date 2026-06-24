@@ -28,8 +28,16 @@ _ORG_TOOLS = {"list_departments"}
 _OFFER_TOOLS = {"get_offer_custom_fields"}
 _TALENT_TOOLS = {"list_talent_pools", "list_talent_pool_candidates"}
 
+# 面试官可见的候选人工具（按需求：看自己要面的人的状态/详情/阶段）
+# 不含 get_candidate_applications（按 candidateId 查、无法按面试官过滤，避免越权）
+_INTERVIEWER_CANDIDATE_TOOLS = {
+    "search_candidates",
+    "get_candidate_detail",
+    "get_candidate_stage",
+}
+
 # 角色预设（面向内部用户）：可用工具 + 默认数据范围
-# tools 为 "*" 表示全部；scope ∈ {all, department}
+# tools 为 "*" 表示全部；scope ∈ {all, department, interviewer}
 _ROLE_PRESETS: dict[str, dict] = {
     # HR/招聘团队负责人：全部工具 + 全量数据
     "hr_admin": {"tools": "*", "scope": "all"},
@@ -49,6 +57,11 @@ _ROLE_PRESETS: dict[str, dict] = {
         "tools": _CANDIDATE_TOOLS | _JOB_TOOLS | _PROCESS_TOOLS | _ORG_TOOLS,
         "scope": "department",
     },
+    # 面试官：仅自己参与面试的候选人的状态/详情/阶段 + 职位/流程信息
+    "interviewer": {
+        "tools": _INTERVIEWER_CANDIDATE_TOOLS | _JOB_TOOLS | _PROCESS_TOOLS,
+        "scope": "interviewer",
+    },
     # 普通员工：职位/流程/组织等公开信息，不含候选人 PII
     "viewer": {
         "tools": _JOB_TOOLS | _PROCESS_TOOLS | _ORG_TOOLS,
@@ -64,10 +77,11 @@ class ToolPermissionDenied(Exception):
 @dataclass(frozen=True)
 class Principal:
     role: str
-    scope: str  # all | department
+    scope: str  # all | department | interviewer
     allowed_tools: frozenset[str]
     allow_all_tools: bool
     departments: tuple[str, ...]
+    moka_user_id: int | None = None  # interviewer 范围匹配用
 
     def can_use(self, tool_name: str) -> bool:
         return self.allow_all_tools or tool_name in self.allowed_tools
@@ -99,6 +113,7 @@ def _build_principal(s: Settings) -> Principal:
         allowed_tools=tools,
         allow_all_tools=allow_all,
         departments=tuple(_split_csv(s.departments)),
+        moka_user_id=s.moka_user_id,
     )
 
 
@@ -121,10 +136,16 @@ def _tier_for_moka_role(role: int | None) -> str:
         return "hr_admin"
     if role >= 20:  # 用人经理 / 高级用人经理
         return "hiring_manager"
-    return "viewer"  # 面试官 / 前台 / 内推人
+    if role == 10:  # 面试官：只看自己参与面试的候选人
+        return "interviewer"
+    return "viewer"  # 前台 / 内推人
 
 
-def _principal_for_tier(tier: str, departments: tuple[str, ...]) -> Principal:
+def _principal_for_tier(
+    tier: str,
+    departments: tuple[str, ...],
+    moka_user_id: int | None = None,
+) -> Principal:
     preset = _ROLE_PRESETS.get(tier, _ROLE_PRESETS["viewer"])
     allow_all = preset["tools"] == "*"
     tools = frozenset() if allow_all else frozenset(preset["tools"])
@@ -134,6 +155,7 @@ def _principal_for_tier(tier: str, departments: tuple[str, ...]) -> Principal:
         allowed_tools=tools,
         allow_all_tools=allow_all,
         departments=tuple(d.strip() for d in departments if d),
+        moka_user_id=moka_user_id,
     )
 
 
@@ -164,7 +186,7 @@ async def ensure_principal() -> Principal:
         _resolved = _principal_for_tier("viewer", ())
     else:
         tier = _tier_for_moka_role(user.role)
-        _resolved = _principal_for_tier(tier, user.departments)
+        _resolved = _principal_for_tier(tier, user.departments, user.user_id)
     return _resolved
 
 
@@ -211,18 +233,45 @@ def _norm(name: str | None) -> str:
     return (name or "").strip()
 
 
+def _candidate_interviewer_ids(rec: dict) -> set[int]:
+    ids: set[int] = set()
+    for key in ("interviewers", "extendedInterviewers"):
+        for iv in rec.get(key) or []:
+            if isinstance(iv, dict) and isinstance(iv.get("id"), int):
+                ids.add(iv["id"])
+    return ids
+
+
 def filter_candidates(rows: list) -> list:
-    """按当前 principal 的 scope 过滤候选人行（仅 department 范围会过滤）。"""
+    """按当前 principal 的 scope 过滤候选人行。
+
+    - department：保留 job.department 命中 principal.departments 的行。
+    - interviewer：保留 principal.moka_user_id 出现在该候选人面试官中的行。
+    - 其它（all 等）：不过滤。
+    """
     p = _current()
-    if p.scope != "department" or not isinstance(rows, list):
+    if not isinstance(rows, list):
         return rows
-    # 两侧均 trim 后比较（Moka 部门名可能带尾随空格）
-    depts = {_norm(d) for d in p.departments}
-    return [
-        rec
-        for rec in rows
-        if isinstance(rec, dict) and _norm(_candidate_department(rec)) in depts
-    ]
+
+    if p.scope == "department":
+        depts = {_norm(d) for d in p.departments}  # 两侧 trim（部门名可能带尾随空格）
+        return [
+            rec
+            for rec in rows
+            if isinstance(rec, dict) and _norm(_candidate_department(rec)) in depts
+        ]
+
+    if p.scope == "interviewer":
+        if p.moka_user_id is None:
+            return []  # 无法确定身份时不放行任何候选人
+        return [
+            rec
+            for rec in rows
+            if isinstance(rec, dict)
+            and p.moka_user_id in _candidate_interviewer_ids(rec)
+        ]
+
+    return rows
 
 
 def _job_department_name(job: dict) -> str | None:
